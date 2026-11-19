@@ -1,0 +1,151 @@
+#include <Servo.h>
+
+Servo servo;
+
+// Pin definitions
+const int eastLDRPin = A0;
+const int westLDRPin = A1;
+const int eastLDRPin1 = A4;
+const int westLDRPin1 = A5;
+const int inputPin = A3;
+
+const int numReadings = 15;
+int readings[numReadings];      // the readings from the analog input
+int readIndex = 0;              // the index of the current reading
+long total = 0;                 // the running total
+long average = 0; 
+
+const int servoPin   = 10;   // Update to 9 if your signal wire is on D9
+
+// Calibration and operational parameters
+int east = 0;
+int west = 0;
+int error = 0;
+int calibration =0;       // Offset for LDR sensitivity difference
+
+// Movement limits (Assuming 180° = East/Sunrise, 0° = West/Sunset)
+const int eastPos = 180;     // Sunrise position
+const int westPos = 0;       // Sunset position
+const int deadband = 30;     // Hysteresis threshold to prevent jitter
+int servoposition = eastPos; // Start facing East for sunrise
+
+// Night-time reset parameters
+const int nightThreshold = 100;          // Light level below which it is considered dark
+const unsigned long nightDelay = 10000;  // Wait 10 seconds of darkness before resetting
+unsigned long darkStartTime = 0;
+bool isDark = false;
+
+void setup()
+{
+  Serial.begin(9600);
+  servo.attach(servoPin);
+  for (int thisReading = 0; thisReading < numReadings; thisReading++) {
+    readings[thisReading] = 0;
+  }
+  // Align to sunrise position immediately on startup
+  servo.write(servoposition);
+  delay(1000);
+  
+}
+
+void loop()
+{
+  // Read analog values and apply your +160 sensitivity calibration
+  east = (analogRead(eastLDRPin) + analogRead(eastLDRPin1))/2.0;
+  west = (analogRead(westLDRPin) + analogRead(westLDRPin1))/2.0;
+  int sensorValue = analogRead(sensorPin);
+  float pinVoltage = sensorValue * (5.0 / 1023.0);
+  float solarVoltage = pinVoltage * ((10000 + 1000) / 1000);
+  // Calculate difference
+  error = east - west;
+
+  // Print diagnostics to Serial Monitor
+  //Serial.print("East ");
+  //Serial.print(east);
+  //Serial.print(" | East0: ");
+  //Serial.print(analogRead(eastLDRPin)); 
+  //Serial.print(" | East1: ");
+  //Serial.print(analogRead(eastLDRPin1)); 
+
+  //Serial.print(" | West: ");
+  //Serial.print(west);
+  //Serial.print(" | West0: ");
+  //Serial.print(analogRead(westLDRPin)); 
+  //Serial.print(" | West1: ");
+  //Serial.print(analogRead(westLDRPin1)); 
+
+  //Serial.print(" | Error: ");
+  //Serial.print(error);
+  //Serial.print(" | Servo Pos: ");
+  Serial.print(servoposition);
+  Serial.print(",");
+  Serial.println(solarVoltage);
+
+  // 1. Night-time / Low-light Check
+  // Note: Since 'east' has +160 added, raw A0 will be near 0 when east < 165
+  if (east < (nightThreshold + calibration) && west < nightThreshold) 
+  {
+    if (!isDark) 
+    {
+      isDark = true;
+      darkStartTime = millis();
+    }
+
+    // Reset to East (sunrise) after sustained darkness
+    if (millis() - darkStartTime >= nightDelay && servoposition < eastPos)
+    {
+      Serial.println("Night detected: Aligning panel to East for sunrise...");
+      while (servoposition < eastPos)
+      {
+        servoposition++;
+        servo.write(servoposition);
+        delay(25);
+      }
+    }
+  }
+  // 2. Active Daytime Tracking
+  else 
+  {
+    isDark = false;
+
+    if (error > deadband) // More light on East -> move toward East (180°)
+    {
+      if (servoposition < eastPos)
+      {
+        servoposition++;
+        servo.write(servoposition);
+      }
+    }
+    else if (error < -deadband) // More light on West -> move toward West (0°)
+    {
+      if (servoposition > westPos)
+      {
+        servoposition--;
+        servo.write(servoposition);
+      }
+    }
+  }
+
+  delay(50);
+
+ // Subtract the last reading:
+  total = total - readings[readIndex];
+  // Read from the sensor:
+  readings[readIndex] = analogRead(inputPin);
+  // Add the reading to the total:
+  total = total + readings[readIndex];
+  // Advance to the next position in the array:
+  readIndex = readIndex + 1;
+
+  // If we're at the end of the array, wrap around to the beginning:
+  if (readIndex >= numReadings) {
+    readIndex = 0;
+  }
+
+  // Calculate the average:
+  average = total / numReadings;
+
+  // Print the smooth value to the Serial Monitor / Plotter
+  Serial.println(average);
+  delay(100);
+}
